@@ -7,6 +7,7 @@ import { httpConnect } from './http.js';
 import { remoteSocketToWS } from './stream.js';
 import { safeCloseWebSocket } from '../utils/websocket.js';
 import { resolveProxyAddresses, connectWithRotation } from '../utils/proxyResolver.js';
+import { vlessOutboundConnect, VLESS_CMD_TCP } from './vless.js';
 
 /**
  * Handles outbound TCP connections for the proxy.
@@ -26,11 +27,31 @@ import { resolveProxyAddresses, connectWithRotation } from '../utils/proxyResolv
 export async function handleTCPOutBound(remoteSocket, addressType, addressRemote, portRemote, rawClientData, webSocket, protocolResponseHeader, log, config, connect) {
 
 	/**
-	 * Connects to target via SOCKS5 or HTTP proxy
-	 * @returns {Promise<import("@cloudflare/workers-types").Socket>}
+	 * Connects to target via VLESS, SOCKS5 or HTTP proxy
+	 * @returns {Promise<import("@cloudflare/workers-types").Socket|{readable: ReadableStream, writable: WritableStream, closed: Promise<void>}>}
 	 */
 	async function connectViaProxy() {
-		if (config.proxyType === 'http') {
+		if (config.proxyType === 'vless' && config.parsedVlessOutbound) {
+			log(`[TCP] Connecting via VLESS outbound to ${addressRemote}:${portRemote}`);
+			const vlessResult = await vlessOutboundConnect(
+				config.parsedVlessOutbound,
+				VLESS_CMD_TCP,
+				addressType,
+				addressRemote,
+				portRemote,
+				rawClientData,
+				log
+			);
+			if (!vlessResult) {
+				throw new Error('VLESS outbound connection failed');
+			}
+			// Return a socket-like object that wraps the streams
+			return {
+				readable: vlessResult.readable,
+				writable: vlessResult.writable,
+				closed: vlessResult.closed
+			};
+		} else if (config.proxyType === 'http') {
 			log(`[TCP] Connecting via HTTP proxy to ${addressRemote}:${portRemote}`);
 			const tcpSocket = await httpConnect(addressType, addressRemote, portRemote, log, config.parsedProxyAddress, connect, rawClientData);
 			if (!tcpSocket) {
@@ -109,8 +130,10 @@ export async function handleTCPOutBound(remoteSocket, addressType, addressRemote
 	async function retry() {
 		let tcpSocket;
 
-		if (config.socks5Relay && config.proxyType && config.parsedProxyAddress) {
-			// Use SOCKS5/HTTP proxy for retry
+		// Check if global proxy mode is enabled (SOCKS5, HTTP, or VLESS)
+		const hasProxyConfig = config.parsedProxyAddress || config.parsedVlessOutbound;
+		if (config.globalProxy && config.proxyType && hasProxyConfig) {
+			// Use SOCKS5/HTTP/VLESS proxy for retry
 			tcpSocket = await connectViaProxy();
 		} else if (config.proxyIP) {
 			// Use proxy rotation for retry
@@ -135,16 +158,31 @@ export async function handleTCPOutBound(remoteSocket, addressType, addressRemote
 	// Main connection logic
 	let tcpSocket;
 
-	if (config.socks5Relay && config.proxyType && config.parsedProxyAddress) {
-		// Global proxy mode: use SOCKS5/HTTP proxy directly
+	// Check if global proxy mode is enabled (SOCKS5, HTTP, or VLESS)
+	const hasProxyConfig = config.parsedProxyAddress || config.parsedVlessOutbound;
+	if (config.globalProxy && config.proxyType && hasProxyConfig) {
+		// Global proxy mode: use SOCKS5/HTTP/VLESS proxy directly
 		log(`[TCP] Using ${config.proxyType.toUpperCase()} proxy (global mode)`);
 		tcpSocket = await connectViaProxy();
-		remoteSocket.value = tcpSocket;
+		log(`[TCP] connectViaProxy returned, tcpSocket=${tcpSocket ? 'valid' : 'null'}`);
 
-		tcpSocket.closed.catch(() => { }).finally(() => {
+		if (!tcpSocket) {
+			log('[TCP] VLESS connection returned null, closing WebSocket');
+			safeCloseWebSocket(webSocket);
+			return;
+		}
+
+		remoteSocket.value = tcpSocket;
+		log(`[TCP] Setting up closed handler`);
+
+		tcpSocket.closed.catch((err) => {
+			log(`[TCP] tcpSocket.closed catch: ${err?.message || 'unknown'}`);
+		}).finally(() => {
+			log('[TCP] tcpSocket.closed finally - closing WebSocket');
 			safeCloseWebSocket(webSocket);
 		});
 
+		log(`[TCP] Calling remoteSocketToWS`);
 		remoteSocketToWS(tcpSocket, webSocket, protocolResponseHeader, null, log);
 	} else {
 		// Standard mode: try direct first, then retry with proxy

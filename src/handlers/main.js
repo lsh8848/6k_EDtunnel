@@ -7,7 +7,7 @@ import { handleDefaultPath } from './http.js';
 import { protocolOverWSHandler } from './websocket.js';
 import { getConfig } from '../generators/config-page.js';
 import { genSub, genTrojanSub } from '../generators/subscription.js';
-import { handleProxyConfig, socks5AddressParser, selectRandomAddress, parseEncodedQueryParams, parsePathProxyParams } from '../utils/parser.js';
+import { handleProxyConfig, socks5AddressParser, selectRandomAddress, parseEncodedQueryParams, parsePathProxyParams, parseVlessUrl } from '../utils/parser.js';
 import { isValidUUID } from '../utils/validation.js';
 
 // Validate default user ID at startup
@@ -84,10 +84,10 @@ export async function handleRequest(request, env, ctx, connect) {
 
 		// Apply URL parameters to request config
 		requestConfig.socks5Address = urlSOCKS5 || requestConfig.socks5Address;
-		requestConfig.socks5Relay = enableGlobalProxy || requestConfig.socks5Relay;
+		requestConfig.globalProxy = enableGlobalProxy || requestConfig.socks5Relay;
 
 		// Log parameters for debugging
-		console.log('Config params:', requestConfig.userID, requestConfig.socks5Address, requestConfig.socks5Relay, urlPROXYIP);
+		console.log('Config params:', requestConfig.userID, requestConfig.socks5Address, requestConfig.globalProxy, urlPROXYIP);
 
 		// Handle proxy configuration
 		const proxyConfig = handleProxyConfig(urlPROXYIP || PROXYIP);
@@ -97,22 +97,41 @@ export async function handleRequest(request, env, ctx, connect) {
 		// Log final proxy settings
 		console.log('Using proxy:', requestConfig.proxyIP, requestConfig.proxyPort);
 
-		// Parse proxy configuration (HTTP takes priority over SOCKS5)
-		if (urlHTTP) {
+		// Parse VLESS outbound configuration (URL parameter > path parameter > environment variable)
+		let urlVLESS = url.searchParams.get('vless') || pathParams.vless;
+		if (urlVLESS || requestConfig.vlessOutbound) {
 			try {
-				const selectedProxy = selectRandomAddress(urlHTTP);
-				requestConfig.parsedProxyAddress = socks5AddressParser(selectedProxy);
-				requestConfig.proxyType = 'http';
+				const vlessUrl = urlVLESS || requestConfig.vlessOutbound;
+				const parsed = parseVlessUrl(vlessUrl);
+				if (parsed) {
+					requestConfig.parsedVlessOutbound = parsed;
+					requestConfig.proxyType = 'vless';
+					// Use globalProxy flag from path/query params (e.g., /gvless=, /vless://, ?globalproxy)
+					console.log('VLESS outbound configured:', parsed.address, parsed.port);
+				}
 			} catch (err) {
-				console.log('HTTP proxy parse error:', err.toString());
+				console.log('VLESS outbound parse error:', err.toString());
 			}
-		} else if (requestConfig.socks5Address) {
-			try {
-				const selectedProxy = selectRandomAddress(requestConfig.socks5Address);
-				requestConfig.parsedProxyAddress = socks5AddressParser(selectedProxy);
-				requestConfig.proxyType = 'socks5';
-			} catch (err) {
-				console.log('SOCKS5 proxy parse error:', err.toString());
+		}
+
+		// Parse proxy configuration (VLESS > HTTP > SOCKS5)
+		if (requestConfig.proxyType !== 'vless') {
+			if (urlHTTP) {
+				try {
+					const selectedProxy = selectRandomAddress(urlHTTP);
+					requestConfig.parsedProxyAddress = socks5AddressParser(selectedProxy);
+					requestConfig.proxyType = 'http';
+				} catch (err) {
+					console.log('HTTP proxy parse error:', err.toString());
+				}
+			} else if (requestConfig.socks5Address) {
+				try {
+					const selectedProxy = selectRandomAddress(requestConfig.socks5Address);
+					requestConfig.parsedProxyAddress = socks5AddressParser(selectedProxy);
+					requestConfig.proxyType = 'socks5';
+				} catch (err) {
+					console.log('SOCKS5 proxy parse error:', err.toString());
+				}
 			}
 		}
 
