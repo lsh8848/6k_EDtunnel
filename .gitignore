@@ -25,3 +25,4 @@ Thumbs.db
 node_modules/
 package-lock.json
 ref_code.js
+test/

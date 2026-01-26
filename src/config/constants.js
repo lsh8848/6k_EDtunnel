@@ -28,3 +28,21 @@ export const ed = 'RUR0dW5uZWw=';
 export const trojanPt = 'dHJvamFu'; // 'trojan' in base64
 export const TROJAN_CMD_TCP = 0x01;
 export const TROJAN_CMD_UDP = 0x03;
+
+/**
+ * VLESS protocol command types
+ */
+export const VLESS_CMD_TCP = 0x01;
+export const VLESS_CMD_UDP = 0x02;
+
+/**
+ * VLESS protocol address types
+ */
+export const VLESS_ADDR_IPV4 = 1;
+export const VLESS_ADDR_DOMAIN = 2;
+export const VLESS_ADDR_IPV6 = 3;
+
+/**
+ * Default VLESS outbound connection timeout in milliseconds
+ */
+export const VLESS_OUTBOUND_TIMEOUT = 10000;

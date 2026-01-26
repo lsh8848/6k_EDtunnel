@@ -23,14 +23,15 @@ export function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, lo
 				controller.enqueue(event.data);
 			});
 
-			webSocketServer.addEventListener('close', () => {
+			webSocketServer.addEventListener('close', (event) => {
+				log(`readableWebSocketStream is close (code: ${event.code})`);
 				if (readableStreamCancel) return;
 				safeCloseWebSocket(webSocketServer);
 				controller.close();
 			});
 
 			webSocketServer.addEventListener('error', (err) => {
-				log('webSocketServer has error');
+				log(`webSocketServer has error: ${err?.message || 'unknown'}`);
 				controller.error(err);
 			});
 			const { earlyData, error } = base64ToArrayBuffer(earlyDataHeader);
@@ -66,13 +67,17 @@ export function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, lo
  * @param {Function} log - Logging function
  */
 export async function remoteSocketToWS(remoteSocket, webSocket, protocolResponseHeader, retry, log) {
+	log(`[remoteSocketToWS] Starting, remoteSocket.readable=${!!remoteSocket?.readable}`);
 	let hasIncomingData = false;
 
 	try {
+		log(`[remoteSocketToWS] Starting pipeTo...`);
 		await remoteSocket.readable.pipeTo(
 			new WritableStream({
 				async write(chunk) {
+					log(`[remoteSocketToWS] Received chunk, size=${chunk?.byteLength || chunk?.length || 0}`);
 					if (webSocket.readyState !== WS_READY_STATE_OPEN) {
+						log(`[remoteSocketToWS] WebSocket not open, readyState=${webSocket.readyState}`);
 						throw new Error('WebSocket is not open');
 					}
 
@@ -84,27 +89,32 @@ export async function remoteSocketToWS(remoteSocket, webSocket, protocolResponse
 						const combined = new Uint8Array(header.length + data.length);
 						combined.set(header, 0);
 						combined.set(data, header.length);
+						log(`[remoteSocketToWS] Sending first chunk with header, total size=${combined.length}`);
 						webSocket.send(combined.buffer);
 						protocolResponseHeader = null;
 					} else {
+						log(`[remoteSocketToWS] Sending chunk to WebSocket`);
 						webSocket.send(chunk);
 					}
 				},
 				close() {
-					log(`Remote connection readable closed. Had incoming data: ${hasIncomingData}`);
+					log(`[remoteSocketToWS] Remote connection readable closed. Had incoming data: ${hasIncomingData}`);
 				},
 				abort(reason) {
+					log(`[remoteSocketToWS] Remote connection readable aborted: ${reason}`);
 					console.error(`Remote connection readable aborted:`, reason);
 				},
 			})
 		);
+		log(`[remoteSocketToWS] pipeTo completed normally`);
 	} catch (error) {
+		log(`[remoteSocketToWS] pipeTo error: ${error.message}`);
 		console.error(`remoteSocketToWS error:`, error.stack || error);
 		safeCloseWebSocket(webSocket);
 	}
 
 	if (!hasIncomingData && retry) {
-		log(`No incoming data, retrying`);
+		log(`[remoteSocketToWS] No incoming data, retrying`);
 		await retry();
 	}
 }

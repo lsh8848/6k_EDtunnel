@@ -7,6 +7,7 @@ import { handleTCPOutBound } from '../proxy/tcp.js';
 import { handleDNSQuery } from '../protocol/dns.js';
 import { processProtocolHeader } from '../protocol/vless.js';
 import { isTrojanProtocol, processTrojanHeader } from '../protocol/trojan.js';
+import { canHandleUDP, handleUDPOutbound } from '../proxy/udp-handler.js';
 
 /**
  * Handles protocol over WebSocket requests.
@@ -79,12 +80,35 @@ export async function protocolOverWSHandler(request, config, connect) {
 			if (hasError) {
 				throw new Error(message);
 			}
-			// Handle UDP connections for DNS (port 53) only
+			// Handle UDP connections
 			if (isUDP) {
-				if (portRemote === 53) {
+				// Check if we have a UDP-capable outbound (e.g., VLESS outbound)
+				if (canHandleUDP(config)) {
+					// Full UDP support via VLESS outbound
+					const protocolResponseHeader = protocolType === 'trojan'
+						? null
+						: new Uint8Array([protocolVersion[0], 0]);
+					const rawClientData = chunk.slice(rawDataIndex);
+					const udpWritable = await handleUDPOutbound(
+						webSocket,
+						protocolResponseHeader,
+						addressType,
+						addressRemote,
+						portRemote,
+						rawClientData,
+						log,
+						config
+					);
+					if (udpWritable) {
+						// Store the writable stream for subsequent messages
+						remoteSocketWrapper.value = { writable: udpWritable };
+					}
+					return;
+				} else if (portRemote === 53) {
+					// Fallback to DNS-only mode when no UDP-capable outbound
 					isDns = true;
 				} else {
-					throw new Error('UDP proxy is only enabled for DNS (port 53)');
+					throw new Error('UDP proxy requires VLESS outbound configuration');
 				}
 				return; // Early return after setting isDns or throwing error
 			}
