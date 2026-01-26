@@ -34,16 +34,31 @@ export const defaultSocks5Address = '';
 export const defaultSocks5Relay = false;
 
 /**
+ * Default proxy connection timeout in milliseconds
+ * Used when rotating through multiple proxy addresses
+ */
+export const defaultProxyTimeout = 1500;
+
+/**
+ * Default proxy fallback setting
+ * When true: Falls back to direct connection if all proxies fail
+ * When false: Fails immediately if all proxies fail
+ */
+export const defaultEnableProxyFallback = true;
+
+/**
  * Creates a request configuration object with default values
  * @param {Object} env - Environment variables
  * @param {string} env.UUID - User ID for authentication
  * @param {string} env.SOCKS5 - SOCKS5 proxy configuration
  * @param {string} env.SOCKS5_RELAY - SOCKS5 relay mode flag
  * @param {string} env.TROJAN_PASSWORD - Trojan password (optional, uses UUID if not set)
+ * @param {string} env.PROXY_TIMEOUT - Proxy connection timeout in ms
+ * @param {string} env.PROXY_FALLBACK - Enable fallback to direct connection
  * @returns {Object} Request configuration
  */
 export function createRequestConfig(env = {}) {
-	const { UUID, SOCKS5, SOCKS5_RELAY, TROJAN_PASSWORD } = env;
+	const { UUID, SOCKS5, SOCKS5_RELAY, TROJAN_PASSWORD, PROXY_TIMEOUT, PROXY_FALLBACK } = env;
 	const userID = UUID || defaultUserID;
 	return {
 		userID: userID,
@@ -54,6 +69,9 @@ export function createRequestConfig(env = {}) {
 		proxyPort: null,
 		// Proxy type: 'socks5' | 'http' | null
 		proxyType: null,
-		parsedProxyAddress: null
+		parsedProxyAddress: null,
+		// Multi-proxy rotation settings
+		proxyTimeout: PROXY_TIMEOUT ? parseInt(PROXY_TIMEOUT, 10) : defaultProxyTimeout,
+		enableProxyFallback: PROXY_FALLBACK !== 'false' && defaultEnableProxyFallback
 	};
 }
