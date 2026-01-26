@@ -3,6 +3,7 @@
  */
 
 import { socks5Connect } from './socks5.js';
+import { httpConnect } from './http.js';
 import { remoteSocketToWS } from './stream.js';
 import { safeCloseWebSocket } from '../utils/websocket.js';
 
@@ -21,17 +22,33 @@ import { safeCloseWebSocket } from '../utils/websocket.js';
  * @param {Function} connect - Cloudflare socket connect function
  */
 export async function handleTCPOutBound(remoteSocket, addressType, addressRemote, portRemote, rawClientData, webSocket, protocolResponseHeader, log, config, connect) {
-	async function connectAndWrite(address, port, socks = false) {
+	async function connectAndWrite(address, port, useProxy = false) {
 		/** @type {import("@cloudflare/workers-types").Socket} */
 		let tcpSocket;
-		if (config.socks5Relay) {
-			tcpSocket = await socks5Connect(addressType, address, port, log, config.parsedSocks5Address, connect);
+
+		// Use proxy if socks5Relay (global mode) is enabled, or if useProxy flag is set
+		const shouldUseProxy = config.socks5Relay || useProxy;
+
+		if (shouldUseProxy && config.proxyType && config.parsedProxyAddress) {
+			if (config.proxyType === 'http') {
+				// HTTP proxy handles initial data write internally
+				tcpSocket = await httpConnect(addressType, address, port, log, config.parsedProxyAddress, connect, rawClientData);
+				if (!tcpSocket) {
+					throw new Error('HTTP proxy connection failed');
+				}
+				remoteSocket.value = tcpSocket;
+				log(`connected to ${address}:${port} via HTTP proxy`);
+				return tcpSocket;
+			} else {
+				// SOCKS5 proxy
+				tcpSocket = await socks5Connect(addressType, address, port, log, config.parsedProxyAddress, connect);
+			}
 		} else {
-			tcpSocket = socks ? await socks5Connect(addressType, address, port, log, config.parsedSocks5Address, connect)
-				: connect({
-					hostname: address,
-					port: port,
-				});
+			// Direct connection
+			tcpSocket = connect({
+				hostname: address,
+				port: port,
+			});
 		}
 		remoteSocket.value = tcpSocket;
 		log(`connected to ${address}:${port}`);
@@ -44,7 +61,7 @@ export async function handleTCPOutBound(remoteSocket, addressType, addressRemote
 	// If the cf connect tcp socket has no incoming data, retry with redirect IP
 	async function retry() {
 		let tcpSocket;
-		if (config.enableSocks) {
+		if (config.proxyType && config.parsedProxyAddress) {
 			tcpSocket = await connectAndWrite(addressRemote, portRemote, true);
 		} else {
 			tcpSocket = await connectAndWrite(config.proxyIP || addressRemote, config.proxyPort || portRemote, false);

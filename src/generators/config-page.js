@@ -2,17 +2,18 @@
  * Configuration page HTML generator
  */
 
-import { at, pt } from '../config/constants.js';
+import { at, pt, trojanPt } from '../config/constants.js';
 import { proxyIPs } from '../config/defaults.js';
 
 /**
- * Generates configuration HTML page for VLESS client.
+ * Generates configuration HTML page for VLESS and Trojan clients.
  * @param {string} userIDs - Single or comma-separated user IDs
  * @param {string} hostName - Host name for configuration
  * @param {string|string[]} proxyIP - Proxy IP address or array of addresses
+ * @param {string} trojanPassword - Trojan password (optional, defaults to first userID)
  * @returns {string} Configuration HTML
  */
-export function getConfig(userIDs, hostName, proxyIP) {
+export function getConfig(userIDs, hostName, proxyIP, trojanPassword = null) {
 	// Get proxy port from first proxy address
 	const firstProxy = Array.isArray(proxyIP) ? proxyIP[0] : proxyIP;
 	const proxyPort = firstProxy.includes(':') ? firstProxy.split(':')[1] : '443';
@@ -21,6 +22,10 @@ export function getConfig(userIDs, hostName, proxyIP) {
 
 	// Split the userIDs into an array
 	const userIDArray = userIDs.split(",");
+
+	// Trojan password (use provided or default to first userID)
+	const effectiveTrojanPassword = trojanPassword || userIDArray[0];
+	const trojanCommonUrlPart = `?security=tls&type=ws&host=${hostName}&path=%2F%3Fed%3D2048&sni=${hostName}#${hostName}`;
 
 	// Prepare output string for each userID
 	const sublink = `https://${hostName}/sub/${userIDArray[0]}?format=clash`;
@@ -173,6 +178,7 @@ export function getConfig(userIDs, hostName, proxyIP) {
       <div style="clear: both;"></div>
       <div class="btn-group">
         <a href="//${hostName}/sub/${userIDArray[0]}" class="btn" target="_blank"><i class="fas fa-link"></i> VLESS Subscription</a>
+        <a href="//${hostName}/trojan/${userIDArray[0]}" class="btn" target="_blank"><i class="fas fa-shield-alt"></i> Trojan Subscription</a>
         <a href="clash://install-config?url=${encodeURIComponent(`https://${hostName}/sub/${userIDArray[0]}?format=clash`)}" class="btn" target="_blank"><i class="fas fa-bolt"></i> Clash Subscription</a>
         <a href="${clash_link}" class="btn" target="_blank"><i class="fas fa-bolt"></i> Clash Link</a>
         <a href="${subbestip}" class="btn" target="_blank"><i class="fas fa-star"></i> Best IP Subscription</a>
@@ -181,6 +187,7 @@ export function getConfig(userIDs, hostName, proxyIP) {
         <h3>Options Explained:</h3>
         <ul>
           <li><strong>VLESS Subscription:</strong> Direct link for VLESS protocol configuration. Suitable for clients supporting VLESS.</li>
+          <li><strong>Trojan Subscription:</strong> Direct link for Trojan protocol configuration. Suitable for clients supporting Trojan-WS.</li>
           <li><strong>Clash Subscription:</strong> Opens the Clash client with pre-configured settings. Best for Clash users on mobile devices.</li>
           <li><strong>Clash Link:</strong> A web link to convert the VLESS config to Clash format. Useful for manual import or troubleshooting.</li>
           <li><strong>Best IP Subscription:</strong> Provides a curated list of optimal server IPs for many <b>different countries</b>.</li>
@@ -190,6 +197,11 @@ export function getConfig(userIDs, hostName, proxyIP) {
     </div>
   `;
 
+	// Generate Trojan configuration
+	const trojanMain = atob(trojanPt) + '://' + encodeURIComponent(effectiveTrojanPassword) + atob(at) + hostName + ":443" + trojanCommonUrlPart;
+	const firstProxyHostForTrojan = (Array.isArray(proxyIP) ? proxyIP[0] : proxyIP).split(':')[0];
+	const trojanSec = atob(trojanPt) + '://' + encodeURIComponent(effectiveTrojanPassword) + atob(at) + firstProxyHostForTrojan + ":" + proxyPort + trojanCommonUrlPart;
+
 	const configOutput = userIDArray.map((userID) => {
 		const protocolMain = atob(pt) + '://' + userID + atob(at) + hostName + ":443" + commonUrlPart;
 		const firstProxyHost = (Array.isArray(proxyIP) ? proxyIP[0] : proxyIP).split(':')[0];
@@ -197,13 +209,13 @@ export function getConfig(userIDs, hostName, proxyIP) {
 		return `
       <div class="container config-item">
         <h2>UUID: ${userID}</h2>
-        <h3>Default IP Configuration</h3>
+        <h3>VLESS Default IP Configuration</h3>
         <div class="code-container">
           <pre><code>${protocolMain}</code></pre>
           <button class="btn copy-btn" onclick='copyToClipboard("${protocolMain}")'><i class="fas fa-copy"></i> Copy</button>
         </div>
 
-        <h3>Best IP Configuration</h3>
+        <h3>VLESS Best IP Configuration</h3>
         <div class="input-group mb-3">
           <select class="form-select" id="proxySelect" onchange="updateProxyConfig()">
             ${typeof proxyIP === 'string' ?
@@ -220,17 +232,48 @@ export function getConfig(userIDs, hostName, proxyIP) {
     `;
 	}).join('');
 
+	// Trojan configuration section
+	const trojanConfigOutput = `
+      <div class="container config-item">
+        <h2>Trojan Configuration</h2>
+        <p>Password: <code>${effectiveTrojanPassword}</code></p>
+        <h3>Trojan Default IP Configuration</h3>
+        <div class="code-container">
+          <pre><code>${trojanMain}</code></pre>
+          <button class="btn copy-btn" onclick='copyToClipboard("${trojanMain}")'><i class="fas fa-copy"></i> Copy</button>
+        </div>
+
+        <h3>Trojan Best IP Configuration</h3>
+        <div class="input-group mb-3">
+          <select class="form-select" id="trojanProxySelect" onchange="updateTrojanProxyConfig()">
+            ${typeof proxyIP === 'string' ?
+				`<option value="${proxyIP}">${proxyIP}</option>` :
+				Array.from(proxyIP).map(proxy => `<option value="${proxy}">${proxy}</option>`).join('')}
+          </select>
+        </div>
+		<br>
+        <div class="code-container">
+          <pre><code id="trojanProxyConfig">${trojanSec}</code></pre>
+          <button class="btn copy-btn" onclick='copyToClipboard(document.getElementById("trojanProxyConfig").textContent)'><i class="fas fa-copy"></i> Copy</button>
+        </div>
+      </div>
+    `;
+
 	return `
   <html>
   ${htmlHead}
   <body>
     ${header}
     ${configOutput}
+    ${trojanConfigOutput}
     <script>
       const userIDArray = ${JSON.stringify(userIDArray)};
       const pt = "${pt}";
       const at = "${at}";
+      const trojanPt = "${trojanPt}";
+      const trojanPassword = "${encodeURIComponent(effectiveTrojanPassword)}";
       const commonUrlPart = "?encryption=none&security=tls&sni=${hostName}&fp=randomized&type=ws&host=${hostName}&path=%2F%3Fed%3D2048#${hostName}";
+      const trojanCommonUrlPart = "?security=tls&type=ws&host=${hostName}&path=%2F%3Fed%3D2048&sni=${hostName}#${hostName}";
 
       function copyToClipboard(text) {
         navigator.clipboard.writeText(text)
@@ -248,6 +291,14 @@ export function getConfig(userIDs, hostName, proxyIP) {
         const [host, port] = proxyValue.split(':');
         const protocolSec = atob(pt) + '://' + userIDArray[0] + atob(at) + host + ":" + port + commonUrlPart;
         document.getElementById("proxyConfig").textContent = protocolSec;
+      }
+
+      function updateTrojanProxyConfig() {
+        const select = document.getElementById('trojanProxySelect');
+        const proxyValue = select.value;
+        const [host, port] = proxyValue.split(':');
+        const trojanSec = atob(trojanPt) + '://' + trojanPassword + atob(at) + host + ":" + port + trojanCommonUrlPart;
+        document.getElementById("trojanProxyConfig").textContent = trojanSec;
       }
     </script>
   </body>

@@ -21,3 +21,10 @@ export const byteToHex = Array.from({ length: 256 }, (_, i) => (i + 0x100).toStr
 export const at = 'QA==';
 export const pt = 'dmxlc3M=';
 export const ed = 'RUR0dW5uZWw=';
+
+/**
+ * Trojan protocol constants
+ */
+export const trojanPt = 'dHJvamFu'; // 'trojan' in base64
+export const TROJAN_CMD_TCP = 0x01;
+export const TROJAN_CMD_UDP = 0x03;
