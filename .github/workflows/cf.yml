@@ -86,13 +86,17 @@ jobs:
           WENV: 'prod'
           COMMIT_SHA: ${{ github.sha }}
 
-        # npm (and node16) are installed by wrangler-action in a pre-job setup
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "22"
+
       - name: 🏗 Get dependencies
         run: npm i
 
       - name: 📚 Wrangler publish
         # github.com/cloudflare/wrangler-action
-        uses: cloudflare/wrangler-action@2.0.0
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           # input overrides env-defaults, regardless
