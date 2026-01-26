@@ -6,6 +6,7 @@ import { makeReadableWebSocketStream } from '../proxy/stream.js';
 import { handleTCPOutBound } from '../proxy/tcp.js';
 import { handleDNSQuery } from '../protocol/dns.js';
 import { processProtocolHeader } from '../protocol/vless.js';
+import { isTrojanProtocol, processTrojanHeader } from '../protocol/trojan.js';
 
 /**
  * Handles protocol over WebSocket requests.
@@ -51,6 +52,18 @@ export async function protocolOverWSHandler(request, config, connect) {
 				return;
 			}
 
+			// Auto-detect protocol: Trojan or VLESS
+			// Trojan detection requires password verification to avoid false positives
+			let protocolResult;
+			let protocolType = 'vless';
+
+			if (isTrojanProtocol(chunk, config.trojanPassword)) {
+				protocolType = 'trojan';
+				protocolResult = processTrojanHeader(chunk, config.trojanPassword);
+			} else {
+				protocolResult = processProtocolHeader(chunk, config.userID);
+			}
+
 			const {
 				hasError,
 				message,
@@ -60,9 +73,9 @@ export async function protocolOverWSHandler(request, config, connect) {
 				rawDataIndex,
 				protocolVersion = new Uint8Array([0, 0]),
 				isUDP,
-			} = processProtocolHeader(chunk, config.userID);
+			} = protocolResult;
 			address = addressRemote;
-			portWithRandomLog = `${portRemote}--${Math.random()} ${isUDP ? 'udp ' : 'tcp '}`;
+			portWithRandomLog = `${portRemote}--${Math.random()} ${isUDP ? 'udp ' : 'tcp '} [${protocolType}]`;
 			if (hasError) {
 				throw new Error(message);
 			}
@@ -75,8 +88,10 @@ export async function protocolOverWSHandler(request, config, connect) {
 				}
 				return; // Early return after setting isDns or throwing error
 			}
-			// ["version", "附加信息长度 N"]
-			const protocolResponseHeader = new Uint8Array([protocolVersion[0], 0]);
+			// Protocol response header: VLESS needs 2-byte header, Trojan needs none
+			const protocolResponseHeader = protocolType === 'trojan'
+				? null
+				: new Uint8Array([protocolVersion[0], 0]);
 			const rawClientData = chunk.slice(rawDataIndex);
 
 			if (isDns) {

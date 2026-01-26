@@ -19,11 +19,12 @@ export function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, lo
 	const stream = new ReadableStream({
 		start(controller) {
 			webSocketServer.addEventListener('message', (event) => {
-				const message = event.data;
-				controller.enqueue(message);
+				if (readableStreamCancel) return;
+				controller.enqueue(event.data);
 			});
 
 			webSocketServer.addEventListener('close', () => {
+				if (readableStreamCancel) return;
 				safeCloseWebSocket(webSocketServer);
 				controller.close();
 			});
@@ -78,7 +79,12 @@ export async function remoteSocketToWS(remoteSocket, webSocket, protocolResponse
 					hasIncomingData = true;
 
 					if (protocolResponseHeader) {
-						webSocket.send(await new Blob([protocolResponseHeader, chunk]).arrayBuffer());
+						const header = new Uint8Array(protocolResponseHeader);
+						const data = new Uint8Array(chunk);
+						const combined = new Uint8Array(header.length + data.length);
+						combined.set(header, 0);
+						combined.set(data, header.length);
+						webSocket.send(combined.buffer);
 						protocolResponseHeader = null;
 					} else {
 						webSocket.send(chunk);

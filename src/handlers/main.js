@@ -6,8 +6,8 @@ import { createRequestConfig, defaultUserID, proxyIPs } from '../config/defaults
 import { handleDefaultPath } from './http.js';
 import { protocolOverWSHandler } from './websocket.js';
 import { getConfig } from '../generators/config-page.js';
-import { genSub } from '../generators/subscription.js';
-import { handleProxyConfig, socks5AddressParser, selectRandomAddress, parseEncodedQueryParams } from '../utils/parser.js';
+import { genSub, genTrojanSub } from '../generators/subscription.js';
+import { handleProxyConfig, socks5AddressParser, selectRandomAddress, parseEncodedQueryParams, parsePathProxyParams } from '../utils/parser.js';
 import { isValidUUID } from '../utils/validation.js';
 
 // Validate default user ID at startup
@@ -26,7 +26,7 @@ if (!isValidUUID(defaultUserID)) {
  */
 export async function handleRequest(request, env, ctx, connect) {
 	try {
-		const { UUID, PROXYIP, SOCKS5, SOCKS5_RELAY } = env;
+		const { UUID, PROXYIP, SOCKS5, SOCKS5_RELAY, TROJAN_PASSWORD } = env;
 		const url = new URL(request.url);
 
 		// Create request-specific configuration
@@ -35,15 +35,30 @@ export async function handleRequest(request, env, ctx, connect) {
 		// Get URL parameters
 		let urlPROXYIP = url.searchParams.get('proxyip');
 		let urlSOCKS5 = url.searchParams.get('socks5');
-		let urlSOCKS5_RELAY = url.searchParams.get('socks5_relay');
+		const urlGlobalProxy = url.searchParams.has('globalproxy');
 
 		// Check for encoded parameters in path
-		if (!urlPROXYIP && !urlSOCKS5 && !urlSOCKS5_RELAY) {
+		if (!urlPROXYIP && !urlSOCKS5) {
 			const encodedParams = parseEncodedQueryParams(url.pathname);
 			urlPROXYIP = urlPROXYIP || encodedParams.proxyip;
 			urlSOCKS5 = urlSOCKS5 || encodedParams.socks5;
-			urlSOCKS5_RELAY = urlSOCKS5_RELAY || encodedParams.socks5_relay;
 		}
+
+		// Check for path-based proxy parameters (e.g., /proxyip=, /socks5=, /http=)
+		const pathParams = parsePathProxyParams(url.pathname);
+
+		// Path parameters have lower priority than query parameters
+		if (!urlPROXYIP && pathParams.proxyip) {
+			urlPROXYIP = pathParams.proxyip;
+		}
+		if (!urlSOCKS5 && pathParams.socks5) {
+			urlSOCKS5 = pathParams.socks5;
+		}
+		// Global proxy flag from path (e.g., /socks5://, /http://, /gs5=, /ghttp=) or query param (?globalproxy)
+		const enableGlobalProxy = pathParams.globalProxy || urlGlobalProxy;
+
+		// HTTP proxy parameter
+		let urlHTTP = url.searchParams.get('http') || pathParams.http;
 
 		// Validate proxyip format
 		if (urlPROXYIP) {
@@ -69,7 +84,7 @@ export async function handleRequest(request, env, ctx, connect) {
 
 		// Apply URL parameters to request config
 		requestConfig.socks5Address = urlSOCKS5 || requestConfig.socks5Address;
-		requestConfig.socks5Relay = urlSOCKS5_RELAY === 'true' || requestConfig.socks5Relay;
+		requestConfig.socks5Relay = enableGlobalProxy || requestConfig.socks5Relay;
 
 		// Log parameters for debugging
 		console.log('Config params:', requestConfig.userID, requestConfig.socks5Address, requestConfig.socks5Relay, urlPROXYIP);
@@ -82,15 +97,22 @@ export async function handleRequest(request, env, ctx, connect) {
 		// Log final proxy settings
 		console.log('Using proxy:', requestConfig.proxyIP, requestConfig.proxyPort);
 
-		// Parse SOCKS5 configuration if provided
-		if (requestConfig.socks5Address) {
+		// Parse proxy configuration (HTTP takes priority over SOCKS5)
+		if (urlHTTP) {
 			try {
-				const selectedSocks5 = selectRandomAddress(requestConfig.socks5Address);
-				requestConfig.parsedSocks5Address = socks5AddressParser(selectedSocks5);
-				requestConfig.enableSocks = true;
+				const selectedProxy = selectRandomAddress(urlHTTP);
+				requestConfig.parsedProxyAddress = socks5AddressParser(selectedProxy);
+				requestConfig.proxyType = 'http';
 			} catch (err) {
-				console.log(err.toString());
-				requestConfig.enableSocks = false;
+				console.log('HTTP proxy parse error:', err.toString());
+			}
+		} else if (requestConfig.socks5Address) {
+			try {
+				const selectedProxy = selectRandomAddress(requestConfig.socks5Address);
+				requestConfig.parsedProxyAddress = socks5AddressParser(selectedProxy);
+				requestConfig.proxyType = 'socks5';
+			} catch (err) {
+				console.log('SOCKS5 proxy parse error:', err.toString());
 			}
 		}
 
@@ -100,9 +122,10 @@ export async function handleRequest(request, env, ctx, connect) {
 		const matchingUserID = userIDs.length === 1 ?
 			(requestedPath === userIDs[0] ||
 				requestedPath === `sub/${userIDs[0]}` ||
-				requestedPath === `bestip/${userIDs[0]}` ? userIDs[0] : null) :
+				requestedPath === `bestip/${userIDs[0]}` ||
+				requestedPath === `trojan/${userIDs[0]}` ? userIDs[0] : null) :
 			userIDs.find(id => {
-				const patterns = [id, `sub/${id}`, `bestip/${id}`];
+				const patterns = [id, `sub/${id}`, `bestip/${id}`, `trojan/${id}`];
 				return patterns.some(pattern => requestedPath.startsWith(pattern));
 			});
 
@@ -122,9 +145,11 @@ export async function handleRequest(request, env, ctx, connect) {
 					const proxyAddresses = urlPROXYIP
 						? urlPROXYIP.split(',').map(addr => addr.trim())
 						: (PROXYIP ? PROXYIP.split(',').map(addr => addr.trim()) : proxyIPs);
+					// Get Trojan password (priority: env > userID)
+					const trojanPassword = TROJAN_PASSWORD || matchingUserID;
 					const content = isSubscription ?
-						genSub(matchingUserID, host, proxyAddresses) :
-						getConfig(matchingUserID, host, proxyAddresses);
+						genSub(matchingUserID, host, proxyAddresses, trojanPassword) :
+						getConfig(matchingUserID, host, proxyAddresses, trojanPassword);
 
 					return new Response(content, {
 						status: 200,
@@ -133,6 +158,18 @@ export async function handleRequest(request, env, ctx, connect) {
 								"text/plain;charset=utf-8" :
 								"text/html; charset=utf-8"
 						},
+					});
+				} else if (url.pathname === `/trojan/${matchingUserID}`) {
+					// Trojan-only subscription
+					const proxyAddresses = urlPROXYIP
+						? urlPROXYIP.split(',').map(addr => addr.trim())
+						: (PROXYIP ? PROXYIP.split(',').map(addr => addr.trim()) : proxyIPs);
+					const trojanPassword = TROJAN_PASSWORD || matchingUserID;
+					const content = genTrojanSub(trojanPassword, host, proxyAddresses);
+
+					return new Response(content, {
+						status: 200,
+						headers: { "Content-Type": "text/plain;charset=utf-8" },
 					});
 				} else if (url.pathname === `/bestip/${matchingUserID}`) {
 					return fetch(`https://bestip.06151953.xyz/auto?host=${host}&uuid=${matchingUserID}&path=/`, { headers: request.headers });
