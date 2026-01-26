@@ -1,0 +1,102 @@
+/**
+ * WebSocket protocol handler
+ */
+
+import { makeReadableWebSocketStream } from '../proxy/stream.js';
+import { handleTCPOutBound } from '../proxy/tcp.js';
+import { handleDNSQuery } from '../protocol/dns.js';
+import { processProtocolHeader } from '../protocol/vless.js';
+
+/**
+ * Handles protocol over WebSocket requests.
+ * Creates WebSocket pair, accepts connection, and processes protocol header.
+ * @param {import("@cloudflare/workers-types").Request} request - The incoming request object
+ * @param {Object} config - Request configuration
+ * @param {Function} connect - Cloudflare socket connect function
+ * @returns {Promise<Response>} WebSocket response
+ */
+export async function protocolOverWSHandler(request, config, connect) {
+	/** @type {import("@cloudflare/workers-types").WebSocket[]} */
+	// @ts-ignore
+	const webSocketPair = new WebSocketPair();
+	const [client, webSocket] = Object.values(webSocketPair);
+
+	webSocket.accept();
+
+	let address = '';
+	let portWithRandomLog = '';
+	const log = (/** @type {string} */ info, /** @type {string | undefined} */ event) => {
+		console.log(`[${address}:${portWithRandomLog}] ${info}`, event || '');
+	};
+	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
+
+	const readableWebSocketStream = makeReadableWebSocketStream(webSocket, earlyDataHeader, log);
+
+	/** @type {{ value: import("@cloudflare/workers-types").Socket | null}}*/
+	let remoteSocketWrapper = {
+		value: null,
+	};
+	let isDns = false;
+
+	// ws --> remote
+	readableWebSocketStream.pipeTo(new WritableStream({
+		async write(chunk, controller) {
+			if (isDns) {
+				return await handleDNSQuery(chunk, webSocket, null, log, connect);
+			}
+			if (remoteSocketWrapper.value) {
+				const writer = remoteSocketWrapper.value.writable.getWriter();
+				await writer.write(chunk);
+				writer.releaseLock();
+				return;
+			}
+
+			const {
+				hasError,
+				message,
+				addressType,
+				portRemote = 443,
+				addressRemote = '',
+				rawDataIndex,
+				protocolVersion = new Uint8Array([0, 0]),
+				isUDP,
+			} = processProtocolHeader(chunk, config.userID);
+			address = addressRemote;
+			portWithRandomLog = `${portRemote}--${Math.random()} ${isUDP ? 'udp ' : 'tcp '}`;
+			if (hasError) {
+				throw new Error(message);
+			}
+			// Handle UDP connections for DNS (port 53) only
+			if (isUDP) {
+				if (portRemote === 53) {
+					isDns = true;
+				} else {
+					throw new Error('UDP proxy is only enabled for DNS (port 53)');
+				}
+				return; // Early return after setting isDns or throwing error
+			}
+			// ["version", "附加信息长度 N"]
+			const protocolResponseHeader = new Uint8Array([protocolVersion[0], 0]);
+			const rawClientData = chunk.slice(rawDataIndex);
+
+			if (isDns) {
+				return handleDNSQuery(rawClientData, webSocket, protocolResponseHeader, log, connect);
+			}
+			handleTCPOutBound(remoteSocketWrapper, addressType, addressRemote, portRemote, rawClientData, webSocket, protocolResponseHeader, log, config, connect);
+		},
+		close() {
+			log(`readableWebSocketStream is close`);
+		},
+		abort(reason) {
+			log(`readableWebSocketStream is abort`, JSON.stringify(reason));
+		},
+	})).catch((err) => {
+		log('readableWebSocketStream pipeTo error', err);
+	});
+
+	return new Response(null, {
+		status: 101,
+		// @ts-ignore
+		webSocket: client,
+	});
+}

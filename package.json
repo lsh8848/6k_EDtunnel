@@ -1,20 +1,23 @@
 {
   "name": "edtunnel",
-  "version": "1.0.0",
-  "description": "A tunnel for the edgetunnel project to allow deployed applications to cloudflare pages and workers to be accessed via a custom domain.",
-  "main": "_worker.js",
+  "version": "2.0.0",
+  "description": "A Cloudflare Worker-based VLESS proxy with WebSocket transport. Modular architecture for easy maintenance.",
+  "type": "module",
+  "main": "src/index.js",
   "scripts": {
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run",
     "dev": "wrangler dev --remote",
-    "dev-local": "wrangler dev index.js --remote",
-    "obfuscate": "javascript-obfuscator index.js --output _worker.js --compact true --control-flow-flattening true --control-flow-flattening-threshold 1 --dead-code-injection true --dead-code-injection-threshold 1 --string-array true --string-array-encoding 'rc4' --string-array-threshold 1 --transform-object-keys true --unicode-escape-sequence true"
+    "dev-local": "wrangler dev src/index.js --remote",
+    "bundle": "esbuild src/index.js --bundle --outfile=dist/bundle.js --format=esm --platform=browser --external:cloudflare:sockets",
+    "obfuscate": "npm run bundle && javascript-obfuscator dist/bundle.js --output _worker.js --compact true --identifier-names-generator hexadecimal --rename-globals true --string-array true --string-array-threshold 1 --string-array-encoding base64 --transform-object-keys true --seed 0"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20230710.1",
+    "esbuild": "^0.27.2",
     "javascript-obfuscator": "^4.1.1",
-    "wrangler": "^3.2.0"
+    "wrangler": "^4.60.0"
   }
 }

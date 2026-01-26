@@ -19,26 +19,13 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "16"
+          node-version: "22"
 
       - name: Install dependencies
-        run: npm install -g javascript-obfuscator
+        run: npm install
 
       - name: Obfuscate code
-        run: |
-          javascript-obfuscator index.js --output _worker.js \
-          --compact true \
-          --control-flow-flattening true \
-          --control-flow-flattening-threshold 1 \
-          --dead-code-injection true \
-          --dead-code-injection-threshold 1 \
-          --identifier-names-generator hexadecimal \
-          --rename-globals true \
-          --string-array true \
-          --string-array-encoding 'rc4' \
-          --string-array-threshold 1 \
-          --transform-object-keys true \
-          --unicode-escape-sequence true
+        run: npm run obfuscate
 
       - name: Commit changes
         run: |
