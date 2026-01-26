@@ -118,7 +118,10 @@ export async function handleRequest(request, env, ctx, connect) {
 			if (matchingUserID) {
 				if (url.pathname === `/${matchingUserID}` || url.pathname === `/sub/${matchingUserID}`) {
 					const isSubscription = url.pathname.startsWith('/sub/');
-					const proxyAddresses = PROXYIP ? PROXYIP.split(',').map(addr => addr.trim()) : proxyIPs;
+					// Priority: URL parameter > environment variable > default
+					const proxyAddresses = urlPROXYIP
+						? urlPROXYIP.split(',').map(addr => addr.trim())
+						: (PROXYIP ? PROXYIP.split(',').map(addr => addr.trim()) : proxyIPs);
 					const content = isSubscription ?
 						genSub(matchingUserID, host, proxyAddresses) :
 						getConfig(matchingUserID, host, proxyAddresses);
