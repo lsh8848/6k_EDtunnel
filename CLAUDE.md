@@ -6,74 +6,80 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 EDtunnel is a Cloudflare Worker/Pages-based VLESS proxy tool that implements WebSocket transport protocol for tunneling traffic. It runs on Cloudflare's serverless infrastructure and provides a web-based proxy service with multi-protocol support.
 
-## Core Architecture
-
-### Main Files
-
-- **`index.js`** - Main source code (1517 lines) containing all functionality
-- **`_worker.js`** - Obfuscated production version for deployment (462KB)
-- **`wrangler.toml`** - Cloudflare Worker deployment configuration
-
-### Key Components
-
-- **Request routing system** with path-based dispatch (`/cf`, `/{userID}`, `/sub/{userID}`, etc.)
-- **VLESS protocol over WebSocket** transport implementation
-- **Multi-UUID authentication** with comma-separated configuration
-- **SOCKS5 proxy integration** with authentication support
-- **Subscription generation** for VLESS links and Clash configurations
-- **DNS query handling** over UDP with outbound TCP connections
-
 ## Development Commands
 
 ```bash
 # Local development
-npm run dev          # Development with Wrangler
-npm run dev-local    # Local development with index.js
+npm run dev          # Development with Wrangler (remote mode)
+npm run dev-local    # Local development with src/index.js
 
-# Production deployment
+# Production
 npm run build        # Dry-run deployment check
 npm run deploy       # Deploy to Cloudflare Workers
-npm run obfuscate    # Obfuscate index.js → _worker.js
+npm run bundle       # Bundle src/index.js to dist/bundle.js
+npm run obfuscate    # Bundle + obfuscate → _worker.js
 ```
 
-## Configuration
+## Core Architecture
 
-The application uses environment variables for configuration:
+### Source Structure (src/)
 
-- **UUID** - User authentication (supports comma-separated multiple UUIDs)
-- **PROXYIP** - Proxy server addresses (comma-separated)
-- **SOCKS5** - SOCKS5 proxy configuration with auth
-- **SOCKS5_RELAY** - SOCKS5 relay endpoints
+```
+src/
+├── index.js              # Entry point, exports fetch handler
+├── config/
+│   ├── constants.js      # Protocol constants, ports, DNS servers
+│   └── defaults.js       # Default UUID and configuration
+├── handlers/
+│   ├── main.js           # Main request router
+│   ├── http.js           # HTTP request handling
+│   └── websocket.js      # WebSocket upgrade and VLESS processing
+├── protocol/
+│   ├── vless.js          # VLESS protocol parsing
+│   └── dns.js            # DNS query handling over UDP
+├── proxy/
+│   ├── tcp.js            # TCP connection management
+│   ├── stream.js         # Stream processing utilities
+│   └── socks5.js         # SOCKS5 proxy client
+├── generators/
+│   ├── config-page.js    # Web UI configuration page
+│   └── subscription.js   # VLESS/Clash subscription generation
+└── utils/
+    ├── encoding.js       # Base64 encoding/decoding
+    ├── validation.js     # UUID validation
+    ├── parser.js         # Configuration parsing
+    └── websocket.js      # WebSocket utilities
+```
 
-Configuration can be overridden via URL query parameters: `proxyip`, `socks5`, `socks5_relay`.
+### Production Files
 
-## Architecture Patterns
+- **`_worker.js`** - Obfuscated bundle for Cloudflare deployment
+- **`wrangler.toml`** - Cloudflare Worker configuration
 
 ### Request Flow
 
-1. **Main handler** processes all incoming requests
-2. **Route dispatch** based on URL path patterns
-3. **WebSocket upgrade** for protocol tunneling
-4. **Environment/query parameter** configuration resolution
-5. **Multi-proxy load balancing** with random selection
+1. `src/index.js` → exports `fetch` handler
+2. `handlers/main.js` → routes by URL path (`/cf`, `/{uuid}`, `/sub/{uuid}`)
+3. `handlers/websocket.js` → WebSocket upgrade for VLESS tunneling
+4. `protocol/vless.js` → parse VLESS header, extract destination
+5. `proxy/tcp.js` or `proxy/socks5.js` → establish outbound connection
 
-### Protocol Implementation
+## Configuration
 
-- **VLESS over WebSocket** as primary transport
-- **Base64 encoding/decoding** for parameter handling
-- **UUID validation** and multi-user support
-- **DNS resolution** with fallback mechanisms
-- **TCP connection management** with retry logic
+Environment variables (set in `wrangler.toml` or Cloudflare Dashboard):
 
-## Deployment Options
+| Variable | Description |
+|----------|-------------|
+| `UUID` | User authentication (comma-separated for multiple) |
+| `PROXYIP` | Proxy server addresses (comma-separated, with optional port) |
+| `SOCKS5` | SOCKS5 proxy (`user:pass@host:port`) |
+| `SOCKS5_RELAY` | Enable SOCKS5 relay (`true`/`false`) |
 
-1. **Cloudflare Workers** - Direct serverless deployment
-2. **Cloudflare Pages** - Static site with Functions integration
-3. **GitHub integration** - One-click deployment support
+URL query parameters can override: `proxyip`, `socks5`, `socks5_relay` (UUID cannot be overridden for security).
 
-## Security Features
+## Key Implementation Details
 
-- **JavaScript obfuscation** pipeline using `javascript-obfuscator`
-- **UUID-based authentication** system
-- **TLS encryption** through Cloudflare infrastructure
-- **Environment variable protection** for sensitive configuration
+- Uses Cloudflare's `cloudflare:sockets` for TCP connections
+- VLESS protocol version 0 with WebSocket transport
+- Multi-proxy load balancing via random selection
+- Subscription formats: VLESS links, Clash YAML, Base64 encoded
