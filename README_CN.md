@@ -16,9 +16,13 @@
 - 支持 Cloudflare Workers 和 Pages 部署
 - 支持多 UUID 配置
 - 支持自定义代理 IP 和端口
-- 支持 SOCKS5 代理
+- 支持 SOCKS5 和 HTTP 代理
+- **支持 Trojan 协议**，自动检测协议类型
+- **支持 VLESS 出站代理**，完整 UDP 支持
+- **支持多代理轮换**，自动故障转移
 - 提供自动配置订阅链接
 - 支持 URL 查询参数覆盖配置
+- 支持路径参数配置代理（`/socks5://`、`/http://`、`/vless://`）
 - 简单易用的部署流程
 
 ## 快速部署
@@ -45,6 +49,10 @@
 | `PROXYIP` | 否 | `1.1.1.1` 或 `example.com`<br>多个: `1.1.1.1:9443,2.2.2.2:8443` | 自定义代理IP和端口 |
 | `SOCKS5` | 否 | `user:pass@host:port`<br>多个: `user1:pass1@host1:port1,user2:pass2@host2:port2` | SOCKS5代理配置 |
 | `SOCKS5_RELAY` | 否 | `true` 或 `false` | 启用SOCKS5流量转发 |
+| `TROJAN_PASSWORD` | 否 | `your-password` | Trojan密码（不设置则使用UUID） |
+| `VLESS_OUTBOUND` | 否 | `vless://uuid@host:port?type=ws&security=tls` | VLESS出站代理URL |
+| `PROXY_TIMEOUT` | 否 | `1500` | 代理连接超时（毫秒，默认：1500） |
+| `PROXY_FALLBACK` | 否 | `true` 或 `false` | 代理失败时回退到直连（默认：true） |
 
 ### URL 查询参数配置
 
@@ -54,9 +62,23 @@
 |----------|--------------|------|------|
 | `proxyip` | `PROXYIP` | `?proxyip=1.1.1.1:443` | 覆盖代理IP和端口 |
 | `socks5` | `SOCKS5` | `?socks5=user:pass@host:port` | 覆盖SOCKS5代理配置 |
-| `socks5_relay` | `SOCKS5_RELAY` | `?socks5_relay=true` | 覆盖SOCKS5转发设置 |
+| `http` | - | `?http=user:pass@host:port` | HTTP CONNECT代理配置 |
+| `vless` | `VLESS_OUTBOUND` | `?vless=vless://uuid@host:port` | 覆盖VLESS出站代理 |
+| `globalproxy` | - | `?globalproxy` | 启用全局代理模式（转发所有流量） |
 
 > **安全说明**：UUID 必须通过环境变量或配置文件设置，不能通过 URL 参数设置，以防止未授权修改用户身份。
+
+### 路径参数配置
+
+您也可以通过 URL 路径配置代理：
+
+| 路径格式 | 示例 | 说明 |
+|----------|------|------|
+| `/proxyip=` | `/proxyip=1.1.1.1:443` | 通过路径设置代理IP |
+| `/socks5://` | `/socks5://user:pass@host:port` | 通过路径设置SOCKS5代理 |
+| `/http://` | `/http://user:pass@host:port` | 通过路径设置HTTP CONNECT代理 |
+| `/vless://` | `/vless://uuid@host:port?...` | 通过路径设置VLESS出站代理 |
+| `/gvless=` | `/gvless=base64编码的URL` | VLESS出站代理（全局模式，base64编码） |
 
 #### 使用示例
 
@@ -158,6 +180,41 @@ https://sub.xf.free.hr/auto
 
 ## 高级配置
 
+### Trojan 协议支持
+
+EDtunnel 现已支持 Trojan 协议，可自动检测协议类型：
+
+- 默认密码使用 UUID（如未设置 `TROJAN_PASSWORD`）
+- 配置页面自动生成 Trojan 订阅链接
+- 访问 `/trojan/[uuid]` 获取纯 Trojan 订阅
+
+### HTTP 代理支持
+
+作为 SOCKS5 的替代方案，您可以使用 HTTP CONNECT 代理：
+
+```bash
+# 通过 URL 路径
+https://your-domain.workers.dev/http://user:pass@proxy-host:port/sub/uuid
+
+# 通过 URL 参数
+https://your-domain.workers.dev/?http=user:pass@proxy-host:port
+```
+
+### VLESS 出站代理
+
+将流量通过外部 VLESS 服务器转发，支持完整 UDP：
+
+```bash
+# 环境变量
+VLESS_OUTBOUND=vless://uuid@remote-server:443?type=ws&security=tls&path=/ws
+
+# 通过 URL 路径
+https://your-domain.workers.dev/vless://uuid@host:port?type=ws&security=tls/sub/your-uuid
+
+# 通过 URL 参数
+https://your-domain.workers.dev/?vless=vless://uuid@host:port
+```
+
 ### 多UUID支持
 
 您可以通过以下方式配置多个UUID：
@@ -220,6 +277,23 @@ SOCKS5=192.168.1.1:1080,user:pass@192.168.1.2:1080,192.168.1.3:1080
 
 ```bash
 SOCKS5_RELAY=true
+```
+
+### 多代理轮换和故障转移
+
+配置多个代理地址时，系统提供以下功能：
+
+- **随机轮换**：自动从可用代理中随机选择
+- **连接超时**：通过 `PROXY_TIMEOUT` 配置（默认：1500毫秒）
+- **自动故障转移**：失败时尝试下一个代理
+- **直连回退**：所有代理失败时回退到直连（通过 `PROXY_FALLBACK` 配置）
+
+```bash
+# 配置超时时间（毫秒）
+PROXY_TIMEOUT=2000
+
+# 禁用直连回退
+PROXY_FALLBACK=false
 ```
 
 注意事项：

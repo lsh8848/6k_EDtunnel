@@ -16,9 +16,13 @@ A proxy tool based on Cloudflare Workers and Pages, supporting multiple protocol
 - Support for Cloudflare Workers and Pages deployment
 - Multiple UUID configuration support
 - Custom proxy IP and port support
-- SOCKS5 proxy support
+- SOCKS5 and HTTP proxy support
+- **Trojan protocol support** with auto-detection
+- **VLESS outbound proxy** with full UDP capability
+- **Multi-proxy rotation** with automatic failover
 - Automatic configuration subscription link
 - URL query parameter configuration override support
+- Path-based proxy parameters (`/socks5://`, `/http://`, `/vless://`)
 - Simple and easy deployment process
 
 ## Quick Deployment
@@ -45,6 +49,10 @@ A proxy tool based on Cloudflare Workers and Pages, supporting multiple protocol
 | `PROXYIP` | No | `1.1.1.1` or `example.com`<br>Multiple: `1.1.1.1:9443,2.2.2.2:8443` | Custom proxy IP and port |
 | `SOCKS5` | No | `user:pass@host:port`<br>Multiple: `user1:pass1@host1:port1,user2:pass2@host2:port2` | SOCKS5 proxy configuration |
 | `SOCKS5_RELAY` | No | `true` or `false` | Enable SOCKS5 traffic relay |
+| `TROJAN_PASSWORD` | No | `your-password` | Trojan password (defaults to UUID if not set) |
+| `VLESS_OUTBOUND` | No | `vless://uuid@host:port?type=ws&security=tls` | VLESS outbound proxy URL |
+| `PROXY_TIMEOUT` | No | `1500` | Proxy connection timeout in ms (default: 1500) |
+| `PROXY_FALLBACK` | No | `true` or `false` | Fallback to direct connection if proxies fail (default: true) |
 
 ### URL Query Parameter Configuration
 
@@ -54,7 +62,21 @@ You can use URL query parameters to directly override environment variable confi
 |-----------------|-------------------|---------|-------------|
 | `proxyip` | `PROXYIP` | `?proxyip=1.1.1.1:443` | Override proxy IP and port |
 | `socks5` | `SOCKS5` | `?socks5=user:pass@host:port` | Override SOCKS5 proxy configuration |
-| `socks5_relay` | `SOCKS5_RELAY` | `?socks5_relay=true` | Override SOCKS5 relay setting |
+| `http` | - | `?http=user:pass@host:port` | HTTP CONNECT proxy configuration |
+| `vless` | `VLESS_OUTBOUND` | `?vless=vless://uuid@host:port` | Override VLESS outbound proxy |
+| `globalproxy` | - | `?globalproxy` | Enable global proxy mode (route all traffic) |
+
+### Path-Based Proxy Parameters
+
+You can also configure proxies directly in the URL path:
+
+| Path Format | Example | Description |
+|-------------|---------|-------------|
+| `/proxyip=` | `/proxyip=1.1.1.1:443` | Set proxy IP via path |
+| `/socks5://` | `/socks5://user:pass@host:port` | SOCKS5 proxy via path |
+| `/http://` | `/http://user:pass@host:port` | HTTP CONNECT proxy via path |
+| `/vless://` | `/vless://uuid@host:port?...` | VLESS outbound via path |
+| `/gvless=` | `/gvless=base64-encoded-url` | VLESS outbound (global, base64 encoded) |
 
 > **Security Note**: UUID must be set via environment variables or configuration files, not through URL parameters, to prevent unauthorized identity modifications.
 
@@ -158,6 +180,41 @@ https://sub.xf.free.hr/auto
 
 ## Advanced Configuration
 
+### Trojan Protocol Support
+
+EDtunnel now supports Trojan protocol alongside VLESS, with auto-detection:
+
+- Default password uses UUID if `TROJAN_PASSWORD` is not set
+- Trojan subscription URLs are generated automatically on the configuration page
+- Access Trojan configuration at `/sub/[uuid]`
+
+### HTTP Proxy Support
+
+As an alternative to SOCKS5, you can use HTTP CONNECT proxy:
+
+```bash
+# Via URL path
+https://your-domain.workers.dev/http://user:pass@proxy-host:port/sub/uuid
+
+# Via URL parameter
+https://your-domain.workers.dev/?http=user:pass@proxy-host:port
+```
+
+### VLESS Outbound Proxy
+
+Route traffic through an external VLESS server with full UDP support:
+
+```bash
+# Environment variable
+VLESS_OUTBOUND=vless://uuid@remote-server:443?type=ws&security=tls&path=/ws
+
+# Via URL path
+https://your-domain.workers.dev/vless://uuid@host:port?type=ws&security=tls/sub/your-uuid
+
+# Via URL parameter
+https://your-domain.workers.dev/?vless=vless://uuid@host:port
+```
+
 ### Multiple UUID Support
 
 You can configure multiple UUIDs in these ways:
@@ -220,6 +277,23 @@ Enable SOCKS5 global relay:
 
 ```bash
 SOCKS5_RELAY=true
+```
+
+### Multi-Proxy Rotation and Fallback
+
+When configuring multiple proxy addresses, the system provides:
+
+- **Random rotation**: Automatically selects from available proxies
+- **Connection timeout**: Configurable via `PROXY_TIMEOUT` (default: 1500ms)
+- **Automatic failover**: Tries next proxy on failure
+- **Direct fallback**: Falls back to direct connection if all proxies fail (configurable via `PROXY_FALLBACK`)
+
+```bash
+# Configure timeout (milliseconds)
+PROXY_TIMEOUT=2000
+
+# Disable fallback to direct connection
+PROXY_FALLBACK=false
 ```
 
 Notes:
